@@ -1,0 +1,145 @@
+---
+title: "Rapid Affect Test Preliminary Analysis"
+author: "[Krisya Louie](https://github.com/krislouie)"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+mail: "krisyalouie.hw@gmail.com"
+github: "krislouie"
+# logo: "logo_gallery.png"
+output:
+  epuRate::epurate:
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "hide"
+---
+
+<br>
+
+# Data overview
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+pacman::p_load(
+  rio,        # importing data  
+  here,       # relative file pathways  
+  janitor,    # data cleaning and tables
+  lubridate,  # working with dates
+  epikit,     # age_categories() function
+  tidyverse,  # data management and visualization
+  skimr,      # get data overview 
+  zoo,        # additional date/time functions
+  flextable,  # convert tables to images
+  rstatix,    # get summary stats
+  gtsummary,  # make nice tables for pub
+  officer     # save as word or ppt
+)
+df_raw <- import("19Oct2022_RAT.csv")
+df_clean <- import("19Oct2022_eric_data.csv")
+
+```
+
+Load data, reorder columns, de-duplicate, check for missing data and create epidemiological weeks & time-of-day columns.
+
+```{r warning=FALSE, paged.print=TRUE}
+ 
+df_clean <- df_clean %>% na_if(999)
+df <- df_clean %>% clean_names()
+
+# make factors
+df <- df %>% mutate(gender = fct_recode(gender,
+                                        "Male" = "Male",
+                                        "Female" = "Female",
+                                        "transgender" = "Transexual",
+                                        "agender" = "Asexual",
+                                        "bigender" = "Bisexual",
+                                        "genderx" = "Gender X"),
+                    gender = fct_lump_n(gender,2),
+                    age_groups = fct_recode(as_factor(age_groups),
+                                            "<9" = "1",
+                                            "10-14" = "2",
+                                            "15-19" = "3",
+                                            "20-24" = "4",
+                                            "25-29" = "5",
+                                            "30-34" = "6",
+                                            "35-39" = "7",
+                                            "40-44" = "8",
+                                            "45-49" = "9",
+                                            "50-54" = "10",
+                                            "55-59" = "11",
+                                            "60-64" = "12",
+                                            ">65" = "13"),
+                    k6_tier = fct_relevel(as_factor(k6_tier),
+                                          "No risk", "Low risk", "Moderate risk", "High risk"),
+                    caught_covid = fct_relevel(caught_covid,"absence","presence"),
+                    family_covid = fct_relevel(family_covid,"absence","presence"),
+                    friend_covid = fct_relevel(friend_covid,"absence","presence"),
+                    quarantine = fct_relevel(quarantine,"absence","presence"),
+                    compul_testing = fct_relevel(compul_testing,"absence","presence"),
+                    lose_job = fct_relevel(lose_job,"absence","presence"),
+                    finance_difficulty = fct_relevel(finance_difficulty,"absence","presence"),
+                    others = fct_relevel(others,"absence","presence"),
+                    caught_covid_asymp = fct_relevel(caught_covid_asymp,"absence","presence"),
+                    resources_shortage = fct_relevel(resources_shortage,"absence","presence"),
+                    no_events = fct_relevel(no_events,"No COVID events", "At least 1 COVID event"),
+                    hk_yn = fct_relevel(hk_yn,"in HK","not in HK"),
+                    cohort_2 = fct_relevel(cohort_2,
+                                           '1'='Cohort 1 (20Feb-24Feb)',
+                                           '2'='Cohort 2 (25Feb-01Mar)',
+                                           '3'='Cohort 3 (02Mar-06Mar)',
+                                           '4'='Cohort 4 (07Mar-11Mar)',
+                                           '5'='Cohort 5 (12Mar-22Mar)',
+                                           '6'='Cohort 6 (23Mar-30Mar)',
+                                           '7'='Cohort 7 (31Mar-20Apr)',
+                                           '8'='Cohort 8 (21Apr-13Jun)',
+                                           '9'='Cohort 9 (14Jun-19Oct'),
+                    service_1 = fct_relevel(as_factor(service_1),
+                                            "1" = "w/ service",
+                                            "2" = "no service and not seeking",
+                                            "3"= "no service and failed seeking"),
+                    agegroup2 = fct_explicit_na(agegroup2, na_level = "Unknown"),
+                    gender_yn = fct_recode(gender_yn,
+                                            "0" = "Without Gender data", "1" = "With Gender data"),
+                    age_yn = ifelse(is.na(age_groups), "0", "1"),
+                    age_yn = fct_relevel(age_yn)
+                    )
+
+# pull date and time data
+df <- df %>% mutate(start_date = ymd_hms(start_date),week = floor_date(start_date, unit = "week"), time_of_day = hour(start_date))
+
+# new youth group column
+df <- df %>% mutate(youth_group = case_when(agegroup2 == "0-14" ~ "<15",
+                                            agegroup2 == "15-24" ~ "15-24",
+                                            agegroup2 == "above 24" & age_yn == 1 ~ ">24",)) %>%
+             mutate(youth_group = fct_relevel(youth_group,"<15","15-24",">24")) 
+
+# reorder columns
+df <- df %>% select(version, start_date, week, time_of_day, cohort_2, gender, age_groups, youth_group,
+              starts_with("k6"), starts_with("fu"), starts_with("evvents"), everything())
+skim(df)
+```
+
+## Descriptives table
+
+Return summary statistics and get publication ready descriptives.
+
+```{r}
+summary_table <- df %>% select(version, time_of_day, gender, youth_group, k6_tier, k6_tot, fu_covid, no_events) %>% 
+  tbl_summary(by = k6_tier, 
+              type = k6_tot ~ "continuous",
+              statistic = list(all_continuous() ~ "{mean} ({sd})",all_categorical() ~ "{n} ({p}%)"),
+              digits = c(k6_tot, fu_covid) ~ 2,
+              label = list(version ~ "Qualtrics version",
+                           time_of_day ~ "Hour of day",
+                           gender ~ "Gender",
+                           youth_group ~ "Age bracket",
+                           k6_tot ~ "K6 score",
+                           fu_covid ~ "Distress attributable to COVID",
+                           no_events ~ "No. of COVID related events")) %>% add_p() %>% add_overall() %>% add_n() %>% 
+  modify_header(label ~ "**Variable**") %>% bold_labels() %>% 
+  modify_spanning_header(c("stat_1", "stat_2", "stat_3", "stat_4") ~ "**K6 risk level**")
+
+summary_table
+
+# summary_table <- summary_table %>% as_flex_table() 
+# save_as_docx(summary_table, path="19OctRAT_desc.docx")
+```
+
+
